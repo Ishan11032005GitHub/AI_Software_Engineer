@@ -128,7 +128,7 @@ def run_agent_pipeline(
             ):
                 raise RuntimeError("PR was required but not created")
 
-        store.update_agent_job_status(job_id, "COMPLETED")
+        # store.update_agent_job_status(job_id, "COMPLETED")
         jc.log("LOG", "Job completed successfully")
 
     except RuntimeError as e:
