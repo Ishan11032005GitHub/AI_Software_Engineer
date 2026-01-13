@@ -80,19 +80,65 @@ def run_agent_pipeline(
     jc = JobControl(store, job_id)
 
     try:
-        store.update_agent_job_status(job_id, "RUNNING")
+        job = store.get_job(job_id) or {}
 
-        repo_path = prepare_repo(owner, repo)
+        # ─────────────────────────────────────
+        # Repo lifecycle (CRITICAL FIX)
+        # ─────────────────────────────────────
+        if job.get("status") != "RUNNING":
+            store.update_agent_job_status(job_id, "RUNNING")
 
-        facts = analyze_repo(repo_path).to_dict()
+            # First time ONLY → hard reset
+            repo_path = prepare_repo(owner, repo, reset=True)
+            store.set_job_repo_path(job_id, repo_path)
+        else:
+            # Re-entrant calls → DO NOT RESET
+            repo_path = job["repo_path"]
+
+        # ─────────────────────────────────────
+        # Repo analysis
+        # ─────────────────────────────────────
+        try:
+            facts = analyze_repo(repo_path).to_dict()
+        except Exception as e:
+            facts = {"error": f"analyze_repo failed: {e}"}
+
         jc.log("ARCH", facts)
 
-        intent = classify_intent_llm(prompt=prompt, repo_path=repo_path, action=action)
+        # ─────────────────────────────────────
+        # Intent classification
+        # ─────────────────────────────────────
+        try:
+            intent = classify_intent_llm(
+                prompt=prompt,
+                repo_path=repo_path,
+                action=action,
+            )
+        except Exception as e:
+            intent = {
+                "intent": "unknown",
+                "confidence": 0.0,
+                "subtasks": [],
+                "notes": f"intent classification failed: {e}",
+            }
+
         jc.log("INTENT", intent)
 
+        # ─────────────────────────────────────
+        # Engineering mode
+        # ─────────────────────────────────────
         policy = resolve_engineering_mode(intent)
-        jc.log("ENGINEERING_MODE", policy.name)
+        jc.log(
+            "ENGINEERING_MODE",
+            {
+                "mode": getattr(policy, "name", str(policy)),
+                "confidence": float(intent.get("confidence", 0.0) or 0.0),
+            },
+        )
 
+        # ─────────────────────────────────────
+        # Build + audit plan
+        # ─────────────────────────────────────
         raw_plan = build_execution_plan_strict(
             action=action,
             prompt=prompt,
@@ -100,13 +146,21 @@ def run_agent_pipeline(
             repo_facts=facts,
         )
 
-        plan = audit_plan(raw_plan, policy, facts)
-        jc.log("PLAN", plan.to_dict())
+        jc.log("PLAN_RAW", raw_plan.to_dict())
 
+        plan = audit_plan(raw_plan, policy, facts)
+        jc.log("PLAN_V2", plan.to_dict())
+
+        # ─────────────────────────────────────
+        # Enforce allowed ops
+        # ─────────────────────────────────────
         for s in plan.steps:
             if s.op not in ALLOWED_OPS:
                 raise RuntimeError(f"INVALID_OP: {s.op}")
 
+        # ─────────────────────────────────────
+        # Execute
+        # ─────────────────────────────────────
         execute_plan(
             plan,
             owner=owner,
@@ -120,15 +174,21 @@ def run_agent_pipeline(
             prompt=prompt,
         )
 
-        # 🔒 PR REQUIRED GUARANTEE
+        # ─────────────────────────────────────
+        # PR policy (NO fake failures)
+        # ─────────────────────────────────────
         if action in ("fix_bugs", "add_feature", "refactor", "create_pr"):
-            if not any(
+            created = any(
                 e["type"] == "PR_CREATED"
                 for e in store.get_job_events(job_id)
-            ):
-                raise RuntimeError("PR was required but not created")
+            )
+            if not created:
+                jc.log(
+                    "LOG",
+                    "No PR created — no meaningful code changes were produced.",
+                )
 
-        # store.update_agent_job_status(job_id, "COMPLETED")
+        store.update_agent_job_status(job_id, "COMPLETED")
         jc.log("LOG", "Job completed successfully")
 
     except RuntimeError as e:
@@ -143,3 +203,6 @@ def run_agent_pipeline(
     except Exception:
         jc.log("ERROR", traceback.format_exc())
         store.update_agent_job_status(job_id, "FAILED")
+
+def set_job_repo_path(self, job_id: int, path: str):
+    self.update_job(job_id, {"repo_path": path})

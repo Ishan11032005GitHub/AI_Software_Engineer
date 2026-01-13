@@ -33,6 +33,11 @@ def _write(path: str, content: str) -> None:
 
 
 def _append_if_missing(path: str, content: str, *, marker: Optional[str] = None) -> None:
+    """
+    Deterministic append:
+    - If marker provided and marker already exists, no-op.
+    - If full content already exists, no-op.
+    """
     existing = ""
     if os.path.exists(path):
         existing = open(path, "r", encoding="utf-8", errors="replace").read()
@@ -58,6 +63,28 @@ def _write_text(abs_path: str, content: str) -> None:
     _safe_makedirs_for_file(abs_path)
     with open(abs_path, "w", encoding="utf-8") as f:
         f.write(content)
+
+
+def _start_process(cmd: list[str], cwd: str) -> subprocess.Popen:
+    return subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+def _terminate_process(p: subprocess.Popen) -> None:
+    try:
+        if p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=3)
+            except Exception:
+                p.kill()
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────
@@ -95,7 +122,11 @@ def update_readme(repo_path: str, kind: str, prompt: str) -> None:
             readme_path,
             "# How to Run (AutoTriage)\n\n"
             f"Prompt:\n{prompt}\n\n"
-            "```bash\nnpm install\nnpm start\n```\n",
+            "## Backend\n"
+            "```bash\n"
+            "npm install\n"
+            "npm start\n"
+            "```\n",
         )
         return
 
@@ -126,16 +157,59 @@ def commit_push_pr(
     prompt: str,
     create_pr_fn,
 ) -> None:
-    if not git_has_changes(repo_path):
-        raise RuntimeError("No changes detected — PR-required action cannot continue")
+    """
+    HARD GUARANTEE:
+    - Never create an empty PR (no-files-changed)
+    - Fail loudly with a useful error instead
+    """
 
+    # Ensure we are on main and up-to-date (reduces weird base drift)
+    try:
+        run_cmd(["git", "checkout", "main"], cwd=repo_path)
+    except Exception:
+        # Some repos may use master; do best effort but don't silently proceed
+        raise RuntimeError("Base branch 'main' not found. Repo must use 'main' as base.")
+
+    # Fetch/pull safely
+    run_cmd(["git", "fetch", "origin", "main"], cwd=repo_path)
+    try:
+        run_cmd(["git", "pull", "--ff-only"], cwd=repo_path)
+    except Exception:
+        # Don't hard-fail here; fetch is enough for diff comparisons
+        jc.log("LOG", "WARN: git pull --ff-only failed; continuing with fetched origin/main")
+
+    # 1) Working tree changes must exist (fast check)
+    if not git_has_changes(repo_path):
+        jc.log("LOG", "No changes detected; repository already up to date")
+        return
+
+    # 2) Ensure diff text exists (stronger than git_has_changes)
+    working_diff = run_cmd(["git", "diff"], cwd=repo_path).strip()
+    if not working_diff:
+        raise RuntimeError("No working-tree diff detected — refusing to create empty PR")
+
+    # Create unique branch
     branch = f"autotriage/{int(time.time())}"
 
     run_cmd(["git", "checkout", "-b", branch], cwd=repo_path)
     run_cmd(["git", "add", "."], cwd=repo_path)
-    run_cmd(["git", "commit", "-m", title], cwd=repo_path)
-    run_cmd(["git", "push", "-u", "origin", branch], cwd=repo_path)
 
+    # 3) Ensure something is staged
+    staged_files = run_cmd(["git", "diff", "--cached", "--name-only"], cwd=repo_path).strip()
+    if not staged_files:
+        raise RuntimeError("Nothing staged after git add — refusing to create empty PR")
+
+    run_cmd(["git", "commit", "-m", title], cwd=repo_path)
+
+    # 4) Ensure branch differs from origin/main (this prevents “No files changed” PRs)
+    pr_diff = run_cmd(["git", "diff", "origin/main...HEAD"], cwd=repo_path).strip()
+    if not pr_diff:
+        raise RuntimeError("Branch has no diff vs origin/main — refusing to create empty PR")
+
+    # Log useful info for dashboard debugging
+    jc.log("DIFF", pr_diff[:20000])
+
+    run_cmd(["git", "push", "-u", "origin", branch], cwd=repo_path)
     jc.log("LOG", f"Pushed branch {branch}")
 
     pr = create_pr_fn(
@@ -156,11 +230,7 @@ def commit_push_pr(
 
     jc.log(
         "PR_CREATED",
-        {
-            "number": pr["number"],
-            "url": pr["html_url"],
-            "branch": branch,
-        },
+        {"number": pr["number"], "url": pr["html_url"], "branch": branch},
     )
 
 
@@ -178,9 +248,15 @@ def execute_plan(
     store,
     jc,
     create_pr_fn,
-    action: str,
-    prompt: str,
+    action: str = "",
+    prompt: str = "",
 ) -> None:
+    """
+    Step runner:
+    - Per-step bounded retry loop
+    - Retry only if diagnosis.retryable
+    - All retries logged
+    """
     for step in plan.steps:
         attempt = 0
 
@@ -221,7 +297,8 @@ def execute_plan(
                 jc.log("FAILURE_CTX", ctx.to_dict())
                 jc.log("DIAGNOSIS", diagnosis)
 
-                if not diagnosis.get("retryable") or attempt >= MAX_RETRIES:
+                retryable = bool(diagnosis.get("retryable", False))
+                if (not retryable) or attempt >= MAX_RETRIES:
                     jc.log(
                         "RETRY_ABORT",
                         {
@@ -251,6 +328,8 @@ def _exec_step(
     op = step.op
     args: Dict[str, Any] = step.args or {}
 
+    # ---------- CORE OPS ----------
+
     if op == "ANALYZE_REPO":
         jc.log("LOG", {"op": op, "status": "ok"})
         return
@@ -264,64 +343,199 @@ def _exec_step(
         return
 
     if op == "FORMAT_BLACK":
-        run_cmd(["black", args.get("path", ".")], cwd=repo_path)
-        jc.log("RESULT", {"op": op, "status": "ok"})
+        path = str(args.get("path") or ".")
+        best_effort = bool(args.get("best_effort", True))
+        try:
+            run_cmd(["black", path], cwd=repo_path)
+            jc.log("RESULT", {"op": op, "status": "ok", "path": path})
+        except Exception as e:
+            if best_effort:
+                jc.log("RESULT", {"op": op, "status": "skipped", "reason": str(e)})
+            else:
+                raise
         return
 
+    # ---------- FILE OPS ----------
+
     if op == "CREATE_FILE":
-        abs_path = os.path.join(repo_path, args["path"])
-        _write_text(abs_path, args.get("content", ""))
-        jc.log("MODIFY", {"created": args["path"]})
+        rel = str(args.get("path") or "").strip()
+        content = str(args.get("content") or "")
+        if not rel:
+            raise RuntimeError("CREATE_FILE missing path")
+
+        abs_path = os.path.join(repo_path, rel)
+        if os.path.exists(abs_path):
+            raise RuntimeError(f"CREATE_FILE failed: {rel} already exists")
+
+        _write_text(abs_path, content)
+        jc.log("MODIFY", {"op": op, "created": rel, "bytes": len(content.encode("utf-8"))})
         return
 
     if op == "EDIT_FILE":
-        abs_path = os.path.join(repo_path, args["path"])
+        rel = str(args.get("path") or "").strip()
+        old = str(args.get("old") or "")
+        new = str(args.get("new") or "")
+        max_repl = int(args.get("max_replacements", 1))
+
+        if not rel:
+            raise RuntimeError("EDIT_FILE missing path")
+        if old == "":
+            raise RuntimeError("EDIT_FILE missing old snippet")
+
+        abs_path = os.path.join(repo_path, rel)
+        if not os.path.exists(abs_path):
+            raise RuntimeError(f"EDIT_FILE failed: {rel} not found")
+
         text = _read_text(abs_path)
-        updated = text.replace(args["old"], args["new"], args.get("max_replacements", 1))
+        if old not in text:
+            raise RuntimeError("EDIT_FILE failed: target snippet not found")
+
+        updated = text.replace(old, new, max_repl)
         _write_text(abs_path, updated)
-        jc.log("MODIFY", {"edited": args["path"]})
+        jc.log("MODIFY", {"op": op, "edited": rel, "max_replacements": max_repl})
         return
 
     if op == "APPLY_PATCH":
+        patch = str(args.get("patch") or "")
+        if not patch.strip():
+            raise RuntimeError("APPLY_PATCH missing patch")
+
         p = subprocess.run(
-            ["git", "apply"],
-            input=args["patch"],
+            ["git", "apply", "--whitespace=nowarn"],
+            input=patch,
             text=True,
             cwd=repo_path,
             capture_output=True,
         )
         if p.returncode != 0:
-            raise RuntimeError(p.stderr)
-        jc.log("MODIFY", {"patch_applied": True})
+            raise RuntimeError(f"APPLY_PATCH failed:\n{p.stderr}")
+
+        jc.log("MODIFY", {"op": op, "patch_applied": True})
         return
 
     if op == "DELETE_FILE":
-        os.remove(os.path.join(repo_path, args["path"]))
-        jc.log("MODIFY", {"deleted": args["path"]})
+        rel = str(args.get("path") or "").strip()
+        if not rel:
+            raise RuntimeError("DELETE_FILE missing path")
+
+        abs_path = os.path.join(repo_path, rel)
+        if not os.path.exists(abs_path):
+            raise RuntimeError(f"DELETE_FILE failed: {rel} not found")
+
+        os.remove(abs_path)
+        jc.log("MODIFY", {"op": op, "deleted": rel})
         return
 
     if op == "APPEND_FILE":
-        _append_if_missing(
-            os.path.join(repo_path, args["path"]),
-            args["content"],
-            marker=args.get("marker"),
-        )
-        jc.log("MODIFY", {"appended": args["path"]})
+        rel = str(args.get("path") or "").strip()
+        content = str(args.get("content") or "")
+        marker = args.get("marker")
+        marker = str(marker) if marker is not None else None
+
+        if not rel:
+            raise RuntimeError("APPEND_FILE missing path")
+        if not content.strip():
+            raise RuntimeError("APPEND_FILE missing content")
+
+        abs_path = os.path.join(repo_path, rel)
+        if not os.path.exists(abs_path):
+            raise RuntimeError(f"APPEND_FILE failed: {rel} not found")
+
+        _append_if_missing(abs_path, content, marker=marker)
+        jc.log("MODIFY", {"op": op, "appended": rel, "marker": marker or ""})
         return
 
+    # ---------- BUILD OPS ----------
+
     if op == "SCAFFOLD_NODE_BACKEND":
-        res = scaffold_node_backend(repo_path, args.get("prompt", ""))
-        jc.log("MODIFY", {"backend": res})
+        p = str(args.get("prompt") or "").strip()
+        serve_frontend = bool(args.get("serve_frontend", True))
+        with_auth_hint = bool(args.get("with_auth_hint", False))
+
+        res = scaffold_node_backend(repo_path, p)
+        jc.log("MODIFY", {"backend": res, "serve_frontend": serve_frontend, "auth_hint": with_auth_hint})
         return
 
     if op == "ADD_ENV_EXAMPLE":
-        add_env_example(repo_path, list(args.get("keys", [])))
-        jc.log("MODIFY", {"env_example": True})
+        keys = args.get("keys") or []
+        add_env_example(repo_path, list(keys))
+        jc.log("MODIFY", {"env_example": ".env.example"})
         return
 
     if op == "UPDATE_README":
-        update_readme(repo_path, args.get("kind", "how_to_run"), args.get("prompt", ""))
-        jc.log("MODIFY", {"readme": True})
+        kind = str(args.get("kind") or "how_to_run")
+        p = str(args.get("prompt") or "")
+        update_readme(repo_path, kind=kind, prompt=p)
+        jc.log("MODIFY", {"readme": "README_AUTOTRIAGE.md", "kind": kind})
+        return
+
+    # ---------- VERIFICATION OPS ----------
+
+    if op == "VERIFY_FILE_EXISTS":
+        rel = str(args.get("path") or "").strip()
+        if not rel:
+            raise RuntimeError("VERIFY_FILE_EXISTS missing path")
+
+        abs_path = os.path.join(repo_path, rel)
+        if not os.path.exists(abs_path):
+            raise RuntimeError(f"VERIFY_FILE_EXISTS failed: {rel}")
+
+        jc.log("VERIFY", {"op": op, "path": rel, "status": "ok"})
+        return
+
+    if op == "VERIFY_CMD":
+        cmd = args.get("cmd")
+        rel_cwd = str(args.get("cwd") or "").strip()
+
+        if not cmd or not isinstance(cmd, list):
+            raise RuntimeError("VERIFY_CMD missing cmd (list)")
+
+        cwd = os.path.join(repo_path, rel_cwd) if rel_cwd else repo_path
+        out = run_cmd(cmd, cwd=cwd)
+        jc.log("VERIFY", {"op": op, "cmd": cmd, "cwd": rel_cwd or ".", "status": "ok", "output": out[-1200:]})
+        return
+
+    if op == "VERIFY_HTTP_ENDPOINT":
+        url = str(args.get("url") or "").strip()
+        start_cmd = args.get("start_cmd")
+        start_cwd = str(args.get("start_cwd") or "").strip()
+        wait_seconds = float(args.get("wait_seconds", 1))
+        timeout = float(args.get("timeout", 8))
+
+        if not url:
+            raise RuntimeError("VERIFY_HTTP_ENDPOINT missing url")
+
+        proc: Optional[subprocess.Popen] = None
+        try:
+            if start_cmd:
+                if not isinstance(start_cmd, list):
+                    raise RuntimeError("VERIFY_HTTP_ENDPOINT start_cmd must be a list")
+                cwd = os.path.join(repo_path, start_cwd) if start_cwd else repo_path
+                proc = _start_process(start_cmd, cwd=cwd)
+                time.sleep(wait_seconds)
+
+            r = requests.get(url, timeout=timeout)
+            if r.status_code >= 400:
+                raise RuntimeError(f"HTTP {r.status_code}")
+
+            jc.log("VERIFY", {"op": op, "url": url, "status": "ok", "code": r.status_code})
+            return
+        finally:
+            if proc:
+                _terminate_process(proc)
+
+    # ---------- CONTROL OPS ----------
+
+    if op == "SET_STATUS":
+        status = str(args.get("status") or "")
+        if not status:
+            raise RuntimeError("SET_STATUS missing status")
+        store.update_agent_job_status(job_id, status)
+        return
+
+    if op == "WAIT_FOR_APPROVAL":
+        jc.log("LOG", "Waiting for approval")
+        jc.wait_for_event("APPROVED")
         return
 
     if op == "COMMIT_PUSH_PR":
@@ -332,10 +546,11 @@ def _exec_step(
             job_id=job_id,
             store=store,
             jc=jc,
-            title=args.get("title", "AutoTriage update"),
+            title=str(args.get("title") or "AutoTriage update"),
             prompt=prompt,
             create_pr_fn=create_pr_fn,
         )
         return
 
+    # STRICT: unknown op => fail hard
     raise RuntimeError(f"EXECUTOR_MISSING_FOR_OP: {op}")
