@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+pymongo
+passlib[bcrypt]
+pyjwt
+gitpython
+# requests
+
+python-dotenv>=1.0.1
+requests>=2.31.0
+GitPython>=3.1.43
+google-generativeai>=0.7.2

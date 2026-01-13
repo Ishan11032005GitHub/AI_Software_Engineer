@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Sessions</title>
+<style>
+body { background:#071020; color:#fff; font-family:Inter; padding:40px; }
+input, select, textarea { width:350px; padding:10px; margin:8px 0; border-radius:6px; border:none; }
+button { padding:10px 18px; background:#0a84ff; border:none; color:#fff; cursor:pointer; border-radius:5px; }
+button:hover { opacity:0.85; }
+.card { padding:20px; background:#0d1b34; margin-top:25px; border-radius:6px; width:420px; }
+</style>
+</head>
+
+<body>
+<h1>Create New Session</h1>
+
+<div class="card">
+<label>Choose Repo</label><br>
+<select id="repo_select">
+<option value="">Select Repository</option>
+</select><br>
+
+<hr style="opacity:.2">
+<h3>Or Create a New Repo</h3>
+<input id="new_repo" placeholder="new-repo-name"><br>
+<button onclick="createRepo()">Create & Attach</button>
+</div>
+
+<div class="card">
+<h3>Start a Session</h3>
+<input id="session_name" placeholder="Session Title (e.g. Fix Auth Bugs)">
+<button onclick="startSession()">Start</button>
+</div>
+
+<script>
+async function loadRepos(){
+    const res = await fetch("/api/repos")
+    const repos = await res.json()
+    const dropdown = document.getElementById("repo_select")
+    repos.forEach(r=>{
+        let opt=document.createElement("option")
+        opt.value=r.full_name
+        opt.innerText=r.full_name
+        dropdown.appendChild(opt)
+    })
+}
+loadRepos()
+
+async function createRepo(){
+    const name=document.getElementById("new_repo").value
+    const res=await fetch("/api/create-repo",{ 
+        method:"POST", headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ repo_name:name })
+    })
+    alert("Repo created & linked")
+    location.reload()
+}
+
+async function startSession(){
+    const repo=document.getElementById("repo_select").value
+    const name=document.getElementById("session_name").value
+
+    const res=await fetch("/api/create-session",{
+        method:"POST", headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ session_name:name, repo })
+    })
+    const data=await res.json()
+    window.location=`/session/${data.session_id}`
+}
+</script>
+</body>
+</html>

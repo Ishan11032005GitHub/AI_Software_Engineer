@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ session_obj.name }} – AI Engineer</title>
+
+  <style>
+    body {
+      background:#0f172a;
+      color:#e5e7eb;
+      font-family:system-ui;
+      padding:2rem;
+    }
+
+    a { color:#60a5fa; text-decoration:none; }
+
+    h1 { margin-bottom:0.4rem; }
+    p { color:#9ca3af; }
+
+    .section {
+      margin-top:2rem;
+      padding:1.5rem;
+      border-radius:12px;
+      border:1px solid #111827;
+      background:#020617;
+    }
+
+    input, textarea, select {
+      width:100%;
+      padding:0.6rem;
+      border-radius:6px;
+      border:1px solid #1f2937;
+      background:#020617;
+      color:#e5e7eb;
+      margin-top:0.4rem;
+    }
+
+    button {
+      margin-top:0.5rem;
+      padding:0.5rem 0.9rem;
+      border:none;
+      border-radius:6px;
+      background:#22c55e;
+      font-weight:600;
+      cursor:pointer;
+    }
+
+    button.secondary { background:#1e293b; }
+    button.danger { background:#ef4444; }
+    button.warn { background:#f59e0b; }
+    button.info { background:#2563eb; }
+
+    table {
+      width:100%;
+      border-collapse:collapse;
+      margin-top:1rem;
+    }
+
+    th, td {
+      padding:0.6rem;
+      border-bottom:1px solid #1f2937;
+      text-align:left;
+      vertical-align:top;
+    }
+
+    th { background:#111827; }
+    tr:nth-child(even) td { background:#020617; }
+
+    .status {
+      font-weight:600;
+      text-transform:uppercase;
+      font-size:0.85rem;
+    }
+
+    .QUEUED { color:#fbbf24; }
+    .RUNNING { color:#60a5fa; }
+    .BLOCKED { color:#f59e0b; }
+    .PAUSED { color:#a78bfa; }
+    .PROPOSED { color:#38bdf8; }
+    .NEEDS_REVIEW { color:#fbbf24; }
+    .MERGING { color:#a78bfa; }
+    .COMPLETED { color:#22c55e; }
+    .FAILED, .ABORTED { color:#ef4444; }
+
+    .progress-bar {
+      margin-top:0.4rem;
+      height:8px;
+      background:#1f2937;
+      border-radius:999px;
+      overflow:hidden;
+    }
+
+    .progress-fill { height:100%; background:#22c55e; }
+    .progress-QUEUED { width:20%; }
+    .progress-RUNNING { width:60%; }
+    .progress-BLOCKED { width:80%; background:#f59e0b; }
+    .progress-PROPOSED { width:90%; background:#38bdf8; }
+    .progress-NEEDS_REVIEW { width:95%; background:#fbbf24; }
+    .progress-MERGING { width:98%; background:#a78bfa; }
+    .progress-COMPLETED { width:100%; }
+    .progress-FAILED,
+    .progress-ABORTED { width:100%; background:#ef4444; }
+
+    .blocked-box {
+      margin-top:0.6rem;
+      padding:0.6rem;
+      border-radius:8px;
+      background:#111827;
+    }
+  </style>
+</head>
+<body>
+
+<a href="/sessions">← Back</a>
+
+<h1>{{ session_obj.name }}</h1>
+<p>This AI engineer autonomously analyzes code and applies fixes.</p>
+
+<!-- Attach Repo -->
+<div class="section">
+  <h2>Attach Repository</h2>
+  <form method="post" action="/session/{{ session_obj.id }}/attach_repo">
+    <input name="repo" placeholder="owner/repo or GitHub URL" required />
+    <button>Attach Repository</button>
+  </form>
+
+  {% if repos %}
+  <ul>
+    {% for r in repos %}
+      <li>
+        {{ r.owner }}/{{ r.repo }}
+        <button class="danger"
+                onclick="detachRepo({{ session_obj.id }}, {{ r.id }})">
+          Detach
+        </button>
+      </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+
+<!-- Assign Task -->
+<div class="section">
+  <h2>Assign Task</h2>
+  <form method="post" action="/session/{{ session_obj.id }}/run">
+
+    <label>Repository</label>
+    <select name="repo_id">
+      {% for r in repos %}
+        <option value="{{ r.id }}">{{ r.owner }}/{{ r.repo }}</option>
+      {% endfor %}
+    </select>
+
+    <label>Action</label>
+    <select name="action">
+      {% for a in actions %}
+        <option value="{{ a[0] }}">{{ a[1] }}</option>
+      {% endfor %}
+    </select>
+
+    <label>Instruction</label>
+    <textarea name="prompt" rows="4"
+      placeholder="Fix bugs, improve performance, refactor authentication…"></textarea>
+
+    <button>Run AI Engineer</button>
+  </form>
+</div>
+
+<!-- Execution Progress -->
+<div class="section">
+  <h2>Execution Progress</h2>
+
+  <table id="jobs-table">
+    <thead>
+      <tr>
+        <th>Repository</th>
+        <th>Action</th>
+        <th>Status</th>
+        <th>Progress</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for j in jobs %}
+      <tr data-job-id="{{ j.id }}">
+        <td>{{ j.owner }}/{{ j.repo }}</td>
+        <td>{{ j.action }}</td>
+        <td class="status {{ j.status }}">{{ j.status }}</td>
+
+        <td>
+          <div class="progress-bar">
+            <div class="progress-fill progress-{{ j.status }}"></div>
+          </div>
+
+          {% if j.status == "BLOCKED" and j.blocked_reason %}
+          <div class="blocked-box">
+            <strong>Needs input:</strong>
+            <div>{{ j.blocked_reason }}</div>
+
+            <textarea rows="2"
+                      placeholder="Your response..."
+                      data-input-for="{{ j.id }}"></textarea>
+
+            <button class="info"
+                    data-job-id="{{ j.id }}"
+                    onclick="handleProvideInput(this)">
+              Submit & Resume
+            </button>
+          </div>
+          {% endif %}
+        </td>
+
+        <td>{{ j.created_at }}</td>
+
+        <!-- FIXED ACTIONS COLUMN -->
+        <td>
+          <!-- Inspect is ALWAYS available -->
+          <button class="secondary"
+                  onclick="window.location='/dashboard/jobs/{{ j.id }}'">
+            Inspect
+          </button>
+
+          {% if j.status == "PROPOSED" %}
+            <button class="info"
+                    data-job-id="{{ j.id }}"
+                    data-action="approve"
+                    onclick="handleJobAction(this)">
+              Create PR
+            </button>
+
+            <button class="danger"
+                    data-job-id="{{ j.id }}"
+                    data-action="abort"
+                    onclick="handleJobAction(this)">
+              Reject
+            </button>
+
+          {% elif j.status == "NEEDS_REVIEW" and j.pr_url %}
+            <a href="{{ j.pr_url }}" target="_blank">PR</a>
+            <button class="info"
+                    data-job-id="{{ j.id }}"
+                    data-action="approve"
+                    onclick="handleJobAction(this)">
+              Merge
+            </button>
+
+          {% elif j.status == "RUNNING" %}
+            <button class="warn"
+                    data-job-id="{{ j.id }}"
+                    data-action="pause"
+                    onclick="handleJobAction(this)">
+              Pause
+            </button>
+
+            <button class="danger"
+                    data-job-id="{{ j.id }}"
+                    data-action="abort"
+                    onclick="handleJobAction(this)">
+              Abort
+            </button>
+
+          {% elif j.status in ["FAILED", "ABORTED"] %}
+            <button class="warn"
+                    data-job-id="{{ j.id }}"
+                    data-action="retry"
+                    onclick="handleJobAction(this)">
+              Retry
+            </button>
+
+          {% elif j.status == "COMPLETED" and j.pr_url %}
+            <a href="{{ j.pr_url }}" target="_blank">View PR</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr>
+        <td colspan="6">No jobs yet</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function detachRepo(sessionId, repoId) {
+  if (!confirm("Detach this repository from the session?")) return;
+
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:8000/api/sessions/${sessionId}/repos/${repoId}`,
+      { method: "DELETE" }
+    );
+
+    if (!res.ok) {
+      const text = await res.text();
+      alert("Detach failed:\n" + text);
+      return;
+    }
+
+    const data = await res.json();
+    if (!data.ok) {
+      alert("Detach failed (server rejected)");
+      return;
+    }
+
+    window.location.reload();
+  } catch (err) {
+    alert("Network error while detaching repo");
+    console.error(err);
+  }
+}
+
+async function handleJobAction(btn) {
+  await fetch(`/api/jobs/${btn.dataset.jobId}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: btn.dataset.action })
+  });
+}
+
+async function handleProvideInput(btn) {
+  const jobId = btn.dataset.jobId;
+  const textarea = document.querySelector(`[data-input-for="${jobId}"]`);
+  if (!textarea || !textarea.value.trim()) return;
+
+  await fetch(`/api/jobs/${jobId}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "provide_input",
+      payload: { answer: textarea.value.trim() }
+    })
+  });
+}
+
+// Poll ONLY jobs
+setInterval(async () => {
+  const res = await fetch(window.location.pathname);
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  document.querySelector("#jobs-table tbody").innerHTML =
+    doc.querySelector("#jobs-table tbody").innerHTML;
+}, 4000);
+</script>
+
+</body>
+</html>

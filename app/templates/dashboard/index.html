@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AutoTriage – AI Engineers</title>
+  <style>
+    body {
+      background:#0f172a;
+      color:#e5e7eb;
+      font-family:system-ui;
+      margin:0;
+      padding:2rem;
+    }
+    h1 { margin-bottom:0.3rem; }
+    p { color:#9ca3af; }
+
+    .actions {
+      margin:2rem 0;
+      display:flex;
+      gap:1rem;
+    }
+
+    button {
+      padding:0.6rem 1rem;
+      border-radius:8px;
+      border:none;
+      cursor:pointer;
+      font-weight:600;
+      background:#2563eb;
+      color:white;
+    }
+
+    button.secondary { background:#1e293b; }
+
+    table {
+      width:100%;
+      border-collapse:collapse;
+      margin-top:1.5rem;
+    }
+
+    th, td {
+      padding:0.75rem;
+      border-bottom:1px solid #1f2937;
+      text-align:left;
+    }
+
+    th { background:#111827; }
+    tr:nth-child(even) td { background:#020617; }
+
+    .status {
+      font-weight:600;
+      text-transform:uppercase;
+      font-size:0.85rem;
+    }
+
+    .QUEUED { color:#fbbf24; }
+    .RUNNING { color:#60a5fa; }
+    .BLOCKED { color:#f59e0b; }
+    .COMPLETED { color:#22c55e; }
+    .FAILED, .ABORTED { color:#ef4444; }
+
+    a { color:#60a5fa; text-decoration:none; }
+  </style>
+</head>
+<body>
+
+<h1>Your AI Software Engineers</h1>
+<p>Create AI engineers, assign repositories, and let them fix code autonomously.</p>
+
+<div class="actions">
+  <form action="/sessions/new" method="post">
+    <button>Create New AI Engineer</button>
+  </form>
+
+  <a href="/sessions">
+    <button class="secondary">View All Engineers</button>
+  </a>
+</div>
+
+<h2>Recent Activity</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Type</th>
+      <th>Target</th>
+      <th>Status</th>
+      <th>Time</th>
+      <th>Link</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for j in jobs %}
+    <tr>
+      <td>Job</td>
+      <td>{{ j.owner }}/{{ j.repo }}</td>
+      <td class="status {{ j.status }}">{{ j.status }}</td>
+      <td>{{ j.created_at }}</td>
+      <td>
+        <a href="/session/{{ j.session_id }}">Open</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="5">No activity yet</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+</body>
+</html>

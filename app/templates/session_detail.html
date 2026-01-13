@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Session</title>
+<style>
+body{ background:#071020;color:#fff;font-family:Inter;padding:40px;}
+button{padding:8px 14px;background:#0a84ff;border:none;color:#fff;margin:5px;border-radius:6px;}
+textarea{width:600px;height:130px;padding:10px;}
+</style>
+</head>
+
+<body>
+
+<h1 id="title"></h1>
+<p id="repo"></p>
+
+<textarea id="prompt" placeholder="Describe bug/feature..."></textarea><br>
+
+<select id="task">
+<option value="fix_bugs">Fix Bugs</option>
+<option value="refactor">Refactor Code</option>
+<option value="add_feature">Add Feature</option>
+<option value="generate_project">Generate Project</option>
+<option value="run_tests">Run Tests</option>
+</select>
+
+<button onclick="runAI()">Run Agent</button>
+
+<h2>Run History</h2>
+<ul id="history"></ul>
+
+<script>
+let sid=window.location.pathname.split("/").pop()
+
+async function loadSession(){
+    const r=await fetch(`/api/session/${sid}`)
+    const s=await r.json()
+    document.getElementById("title").innerText=s.session_name
+    document.getElementById("repo").innerText="Repo: "+s.repo
+    let h=document.getElementById("history")
+    s.runs.forEach(r=>{
+        let li=document.createElement("li")
+        li.innerHTML=`${r.action} → ${r.status} | PR: ${r.pr_url || '—'}`
+        h.append(li)
+    })
+}
+loadSession()
+
+async function runAI(){
+    const payload={
+        session_id:sid,
+        prompt:document.getElementById("prompt").value,
+        action:document.getElementById("task").value
+    }
+    await fetch("/api/run-task",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    alert("Agent started. Refresh to see results.")
+}
+</script>
+</body>
+</html>

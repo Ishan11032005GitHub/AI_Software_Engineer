@@ -1,0 +1,34 @@
+<h2>Run AI Engineer</h2>
+
+<form id="runForm">
+    <input placeholder="owner" name="owner"><br>
+    <input placeholder="repo" name="repo"><br>
+
+    <select name="action">
+        <option value="fix_bugs">Fix Bugs</option>
+        <option value="refactor">Refactor Code</option>
+        <option value="add_feature">Add Feature</option>
+        <option value="generate_project">Generate New Project</option>
+        <option value="run_tests">Run Tests</option>
+    </select><br>
+
+    <textarea name="prompt" placeholder="Describe bug or feature..."></textarea><br>
+
+    <button type="submit">Run Agent</button>
+</form>
+
+<script>
+document.getElementById("runForm").onsubmit = async (e) => {
+    e.preventDefault()
+
+    const form = new FormData(e.target)
+    const payload = Object.fromEntries(form.entries())
+
+    const res = await fetch("/api/run-agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+    alert("Agent started. Check Dashboard after few seconds.")
+}
+</script>

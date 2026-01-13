@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Job {{ job.id }} – Inspect</title>
+
+  <style>
+    body {
+      background:#0f172a;
+      color:#e5e7eb;
+      font-family:system-ui;
+      padding:2rem;
+    }
+
+    a { color:#60a5fa; text-decoration:none; }
+
+    .box {
+      background:#020617;
+      border:1px solid #1f2937;
+      border-radius:12px;
+      padding:1.5rem;
+      margin-top:1.5rem;
+    }
+
+    .label {
+      color:#9ca3af;
+      font-size:0.8rem;
+      margin-top:1rem;
+    }
+
+    .value {
+      font-weight:600;
+    }
+
+    pre {
+      background:#020617;
+      border:1px solid #1f2937;
+      padding:1rem;
+      border-radius:8px;
+      white-space:pre;
+      overflow-x:auto;
+      max-height:500px;
+      font-size:0.85rem;
+    }
+
+    button {
+      background:#22c55e;
+      color:#022c22;
+      border:none;
+      padding:0.6rem 1.2rem;
+      border-radius:8px;
+      font-weight:600;
+      cursor:pointer;
+      margin-top:1rem;
+    }
+
+    button:disabled {
+      background:#374151;
+      color:#9ca3af;
+      cursor:not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+<a href="/dashboard">← Back to Dashboard</a>
+
+<h1>Job #{{ job.id }}</h1>
+
+<div class="box">
+  <div class="label">Repository</div>
+  <div class="value">{{ job.owner }}/{{ job.repo }}</div>
+
+  <div class="label">Action</div>
+  <div class="value">{{ job.action }}</div>
+
+  <div class="label">Status</div>
+  <div class="value">{{ job.status }}</div>
+
+  {% if job.prompt %}
+    <div class="label">Prompt</div>
+    <pre>{{ job.prompt }}</pre>
+  {% endif %}
+</div>
+
+{# ---------------- FIX 1: namespace survives loop scope ---------------- #}
+{% set ns = namespace(diff=None) %}
+{% for e in events %}
+  {% if e.type == "DIFF" %}
+    {% set ns.diff = e.payload %}
+  {% endif %}
+{% endfor %}
+
+{% if ns.diff %}
+<div class="box">
+  <h2>Proposed Code Changes</h2>
+
+  <div class="label">Git Diff</div>
+  <pre>{{ ns.diff }}</pre>
+
+  {% if job.status not in ["ABORTED", "FAILED", "COMPLETED"] %}
+    <button onclick="approve()">Approve & Continue</button>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if job.pr_url %}
+<div class="box">
+  <h2>Pull Request</h2>
+  <a href="{{ job.pr_url }}" target="_blank">
+    View PR #{{ job.pr_number }} →
+  </a>
+</div>
+{% endif %}
+
+<div class="box">
+  <h2>Timeline</h2>
+  <ul>
+    {% for e in events %}
+      <li>
+        <strong>{{ e.type }}</strong>
+        <small>({{ e.created_at }})</small>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<script>
+function approve() {
+  fetch("/api/jobs/{{ job.id }}/action", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "approve" })
+  }).then(() => location.reload());
+}
+</script>
+
+</body>
+</html>

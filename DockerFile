@@ -1,0 +1,41 @@
+# ===========================
+# Dockerfile for AutoTriage-PR-Agent
+# ===========================
+FROM python:3.11-slim
+
+# System deps (git + build tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Copy requirements first (if you have a dedicated file)
+# If you don't, comment this out and pip install directly later.
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source
+COPY app /app/app
+COPY config.py /app/config.py
+
+# Create directory for cloned repos and sqlite DB
+RUN mkdir -p /app/repos /app/data
+
+# --- Runtime ENV variables ---
+# You MUST override these when running the container.
+ENV GITHUB_TOKEN="" \
+    SQLITE_PATH="/app/data/agent.db" \
+    MAX_CHANGED_LINES=120 \
+    TARGET_REPO=""
+
+# Entry script will read TARGET_REPO and call python -m app.main
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]

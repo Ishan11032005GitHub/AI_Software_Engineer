@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AutoTriage – Proposals</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 1.5rem;
+        background: #0f172a;
+        color: #e5e7eb;
+      }
+      h1 {
+        margin-bottom: 1rem;
+      }
+      a {
+        color: #60a5fa;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        padding: 0.6rem 0.8rem;
+        border-bottom: 1px solid #1f2937;
+      }
+      th {
+        text-align: left;
+        background: #111827;
+        position: sticky;
+        top: 0;
+      }
+      tr:nth-child(even) td {
+        background: #020617;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+      }
+      .badge-apply {
+        background: #16a34a33;
+        color: #bbf7d0;
+      }
+      .badge-propose {
+        background: #f9731633;
+        color: #fed7aa;
+      }
+      .badge-multifile {
+        background: #6366f133;
+        color: #c7d2fe;
+      }
+      .confidence {
+        font-variant-numeric: tabular-nums;
+      }
+      .top-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .top-bar a.back {
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="top-bar">
+      <h1>Agent Proposals</h1>
+      <a href="/dashboard" class="back">← Back to dashboard</a>
+    </div>
+
+    {% if not proposals %}
+      <p>No proposals stored yet.</p>
+    {% else %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Repo / Issue</th>
+            <th>Primary file</th>
+            <th>Decision</th>
+            <th>Confidence</th>
+            <th>CI Outcome</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in proposals %}
+            {# p.meta may not exist; guard safely #}
+            {% set meta = p.meta or {} %}
+            <tr>
+              <td>
+                <a href="/dashboard/proposals/{{ p.id }}">{{ p.id }}</a>
+              </td>
+              <td>
+                <div>{{ p.owner }}/{{ p.repo }}</div>
+                <div>#{{ p.issue_number }}</div>
+              </td>
+              <td>
+                <code>{{ p.file_path or "-" }}</code>
+              </td>
+              <td>
+                {% if meta.mode == "APPLY" %}
+                  <span class="badge badge-apply">APPLY</span>
+                {% else %}
+                  <span class="badge badge-propose">{{ meta.mode or "PROPOSE" }}</span>
+                {% endif %}
+                {% if meta.multifile %}
+                  <span class="badge badge-multifile">multi-file</span>
+                {% endif %}
+              </td>
+              <td class="confidence">
+                {% if meta.confidence is not none %}
+                  {{ '%.2f'|format(meta.confidence) }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>
+                {{ meta.ci_outcome or "-" }}
+              </td>
+              <td>{{ p.created_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </body>
+</html>

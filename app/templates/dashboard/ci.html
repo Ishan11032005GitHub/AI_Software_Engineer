@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>CI Evidence – Agent Dashboard</title>
+
+<style>
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    padding: 1.5rem;
+    background: #0f172a;
+    color: #e5e7eb;
+  }
+
+  h1 { margin-bottom: 1rem; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1.2rem;
+    font-size: 0.9rem;
+  }
+
+  th, td {
+    padding: 0.6rem 0.8rem;
+    border-bottom: 1px solid #1f2937;
+  }
+
+  th {
+    background: #111827;
+    text-align: left;
+    position: sticky;
+    top: 0;
+  }
+
+  tr:nth-child(even) td { background: #020617; }
+
+  a {
+    color: #60a5fa;
+    text-decoration: none;
+  }
+  a:hover { text-decoration: underline; }
+
+  .badge-pass { background:#16a34a33;color:#bbf7d0;padding:3px 6px;border-radius:6px;font-size:0.75rem; }
+  .badge-fail { background:#f8717133;color:#fecaca;padding:3px 6px;border-radius:6px;font-size:0.75rem; }
+  .badge-neutral { background:#6b728033;color:#e5e7eb;padding:3px 6px;border-radius:6px;font-size:0.75rem; }
+
+  pre {
+    max-width: 420px;
+    overflow-x: auto;
+    background:#020617;
+    padding:6px;
+    border-radius:6px;
+    font-size:0.75rem;
+    color:#9ca3af;
+  }
+</style>
+</head>
+
+<body>
+<h1>CI Evidence</h1>
+
+{% if not ci or ci|length == 0 %}
+  <p>No CI records found.</p>
+{% else %}
+
+<table>
+<thead>
+<tr>
+  <th>Issue</th>
+  <th>Conclusion</th>
+  <th>Run URL</th>
+  <th>Timestamp</th>
+  <th>Excerpt</th>
+</tr>
+</thead>
+
+<tbody>
+{% for item in ci %}
+<tr>
+  <td>#{{ item.issue_number }}</td>
+
+  <td>
+    {% if item.conclusion == "success" %}
+      <span class="badge-pass">PASSED</span>
+    {% elif item.conclusion == "failure" %}
+      <span class="badge-fail">FAILED</span>
+    {% else %}
+      <span class="badge-neutral">{{ item.conclusion or "-" }}</span>
+    {% endif %}
+  </td>
+
+  <td>
+    {% if item.run_url %}
+      <a href="{{ item.run_url }}" target="_blank">View Run</a>
+    {% else %}-{% endif %}
+  </td>
+
+  <td>{{ item.created_at }}</td>
+
+  <td>
+    {% if item.excerpt %}
+      <pre>{{ item.excerpt[:300] }}</pre>
+    {% else %}
+      -
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% endif %}
+
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>
+      Proposal #{{ proposal.id }} – {{ proposal.owner }}/{{ proposal.repo }}#{{ proposal.issue_number }}
+    </title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 1.5rem;
+        background: #020617;
+        color: #e5e7eb;
+      }
+      a {
+        color: #60a5fa;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .header {
+        margin-bottom: 1.5rem;
+      }
+      .meta {
+        font-size: 0.85rem;
+        color: #9ca3af;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        margin-right: 0.25rem;
+      }
+      .badge-apply {
+        background: #16a34a33;
+        color: #bbf7d0;
+      }
+      .badge-propose {
+        background: #f9731633;
+        color: #fed7aa;
+      }
+      .badge-multifile {
+        background: #6366f133;
+        color: #c7d2fe;
+      }
+      .chips {
+        margin-top: 0.35rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+        gap: 1.25rem;
+        align-items: flex-start;
+      }
+      .card {
+        background: #020617;
+        border-radius: 0.75rem;
+        border: 1px solid #111827;
+        padding: 1rem;
+      }
+      .card h2 {
+        margin-top: 0;
+        font-size: 1rem;
+      }
+      textarea {
+        width: 100%;
+        min-height: 260px;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+          "Courier New", monospace;
+        font-size: 0.8rem;
+        background: #020617;
+        color: #e5e7eb;
+        border: 1px solid #111827;
+        border-radius: 0.5rem;
+        padding: 0.75rem;
+      }
+      .snapshot {
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px dashed #111827;
+      }
+      .snapshot h3 {
+        font-size: 0.85rem;
+        margin: 0 0 0.25rem 0;
+      }
+      .snapshot pre {
+        background: #020617;
+        border-radius: 0.5rem;
+        border: 1px solid #111827;
+        padding: 0.5rem;
+        font-size: 0.75rem;
+        overflow-x: auto;
+      }
+      .snapshot-columns {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0.5rem;
+      }
+      .label {
+        font-size: 0.75rem;
+        color: #9ca3af;
+        margin-bottom: 0.25rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <a href="/dashboard/proposals">&larr; Back to list</a>
+      <h1>Proposal #{{ proposal.id }}</h1>
+      <div class="meta">
+        <div>
+          Repo: {{ proposal.owner }}/{{ proposal.repo }} &mdash; Issue #{{ proposal.issue_number }}
+        </div>
+        <div>Primary file: <code>{{ proposal.file_path or "-" }}</code></div>
+        <div>Created: {{ proposal.created_at }}</div>
+        <div class="chips">
+          {% if proposal.mode == "APPLY" %}
+            <span class="badge badge-apply">APPLY</span>
+          {% else %}
+            <span class="badge badge-propose">{{ proposal.mode or "PROPOSE" }}</span>
+          {% endif %}
+          {% if proposal.multifile %}
+            <span class="badge badge-multifile">multi-file</span>
+          {% endif %}
+          {% if proposal.confidence is not none %}
+            <span class="badge">conf={{ '%.2f'|format(proposal.confidence) }}</span>
+          {% endif %}
+          {% if proposal.ci_outcome %}
+            <span class="badge">CI: {{ proposal.ci_outcome }}</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Engineering doc (raw markdown)</h2>
+        <textarea readonly>{{ proposal.document_md }}</textarea>
+      </div>
+
+      <div class="card">
+        <h2>Patched files</h2>
+
+        {% if not snapshots %}
+          <p>No file snapshots stored.</p>
+        {% else %}
+          {% for s in snapshots %}
+            <div class="snapshot">
+              <h3><code>{{ s.file_path }}</code></h3>
+              <div class="snapshot-columns">
+                <div>
+                  <div class="label">Old</div>
+                  <pre>{{ (s.old_content or "")[:4000] }}</pre>
+                </div>
+                <div>
+                  <div class="label">New</div>
+                  <pre>{{ (s.new_content or "")[:4000] }}</pre>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+body{background:#0f172a;color:#e5e7eb;font-family:sans-serif;margin:0;}
+.nav{background:#1e293b;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;}
+.nav .links a{margin-left:18px;color:#60a5fa;text-decoration:none;}
+.logout{color:#f87171!important;font-weight:bold;}
+.container{padding:28px;}
+h1,h2{margin-bottom:12px;}
+
+.stats{display:flex;gap:18px;margin-bottom:25px;}
+.stats .card{background:#1e293b;padding:18px;border-radius:8px;font-weight:bold;}
+.stats .card span{display:block;font-size:22px;margin-top:6px;}
+
+table{width:100%;border-collapse:collapse;margin:18px 0;}
+td,th{padding:10px;border-bottom:1px solid #1e293b;}
+a{color:#60a5fa;text-decoration:none;}
+a:hover{text-decoration:underline;}
+
+.auth-card{max-width:350px;margin:80px auto;background:#1e293b;padding:22px;border-radius:10px;text-align:center;}
+.auth-card input{width:100%;padding:10px;margin-top:10px;border:none;border-radius:6px;background:#0f172a;color:#fff;}
+.auth-card button{margin-top:15px;padding:10px;width:100%;background:#3b82f6;border:0;border-radius:6px;color:white;font-weight:bold;}
+.doc{background:#1e293b;padding:15px;border-radius:8px;white-space:pre-wrap;}
+.diff-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.old{background:#ef444433;}
+.new{background:#22c55e33;}
