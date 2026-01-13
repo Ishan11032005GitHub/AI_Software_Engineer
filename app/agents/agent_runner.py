@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import os
-import time
 import json
+import time
 import traceback
 import requests
 
 from app.core.repo_manager import prepare_repo
-from app.agents.utils import run_cmd, git_has_changes
 from app.agents.repo_intel import analyze_repo
 from app.agents.intent_classifier import classify_intent_llm
 from app.agents.strict_planner import build_execution_plan_strict
@@ -19,11 +18,6 @@ from app.agents.plan_auditor import audit_plan
 
 
 class JobControl:
-    """
-    Single authority over job lifecycle inside agent.
-    Worker must NEVER guess status after calling pipeline.
-    """
-
     def __init__(self, store, job_id: int):
         self.store = store
         self.job_id = job_id
@@ -44,11 +38,8 @@ class JobControl:
         while True:
             if self.aborted():
                 raise RuntimeError("ABORTED")
-
-            events = self.store.get_job_events(self.job_id)
-            if any(e["type"] == typ for e in events):
+            if any(e["type"] == typ for e in self.store.get_job_events(self.job_id)):
                 return
-
             time.sleep(1)
 
 
@@ -57,7 +48,7 @@ def _create_pr(owner: str, repo: str, branch: str, title: str, body: str) -> dic
     if not token:
         raise RuntimeError("GITHUB_TOKEN not set")
 
-    resp = requests.post(
+    r = requests.post(
         f"https://api.github.com/repos/{owner}/{repo}/pulls",
         headers={
             "Authorization": f"token {token}",
@@ -72,10 +63,10 @@ def _create_pr(owner: str, repo: str, branch: str, title: str, body: str) -> dic
         timeout=30,
     )
 
-    if resp.status_code >= 300:
-        raise RuntimeError(f"GitHub PR failed: {resp.status_code} {resp.text}")
+    if r.status_code >= 300:
+        raise RuntimeError(f"PR creation failed: {r.status_code} {r.text}")
 
-    return resp.json()
+    return r.json()
 
 
 def run_agent_pipeline(
@@ -89,79 +80,33 @@ def run_agent_pipeline(
     jc = JobControl(store, job_id)
 
     try:
-        # ------------------------------------------------------------
-        # Repo preparation + intelligence
-        # ------------------------------------------------------------
+        store.update_agent_job_status(job_id, "RUNNING")
+
         repo_path = prepare_repo(owner, repo)
 
-        try:
-            intel = analyze_repo(repo_path)
-            repo_facts = intel.to_dict()
-        except Exception as e:
-            repo_facts = {"error": f"analyze_repo failed: {e}"}
+        facts = analyze_repo(repo_path).to_dict()
+        jc.log("ARCH", facts)
 
-        jc.log("ARCH", repo_facts)
+        intent = classify_intent_llm(prompt=prompt, repo_path=repo_path, action=action)
+        jc.log("INTENT", intent)
 
-        # ------------------------------------------------------------
-        # STEP 1: Intent classification
-        # ------------------------------------------------------------
-        try:
-            intent_obj = classify_intent_llm(
-                prompt=prompt,
-                repo_path=repo_path,
-                action=action,
-            )
-        except Exception as e:
-            intent_obj = {
-                "intent": "unknown",
-                "confidence": 0.0,
-                "subtasks": [],
-                "notes": f"intent classification failed: {e}",
-            }
+        policy = resolve_engineering_mode(intent)
+        jc.log("ENGINEERING_MODE", policy.name)
 
-        jc.log("INTENT", intent_obj)
-
-        # ------------------------------------------------------------
-        # ENGINEERING MODE (confidence-driven)
-        # ------------------------------------------------------------
-        policy = resolve_engineering_mode(intent_obj)
-        jc.log(
-            "ENGINEERING_MODE",
-            {
-                "mode": policy.name,
-                "confidence": intent_obj.get("confidence", 0.0),
-            },
-        )
-
-        # ------------------------------------------------------------
-        # STEP 2: Build strict plan
-        # ------------------------------------------------------------
         raw_plan = build_execution_plan_strict(
             action=action,
             prompt=prompt,
-            intent_obj=intent_obj,
-            repo_facts=repo_facts,
+            intent_obj=intent,
+            repo_facts=facts,
         )
 
-        jc.log("PLAN_RAW", raw_plan.to_dict())
+        plan = audit_plan(raw_plan, policy, facts)
+        jc.log("PLAN", plan.to_dict())
 
-        # ------------------------------------------------------------
-        # STEP 3: Audit plan against ENGINEERING_MODE
-        # ------------------------------------------------------------
-        plan = audit_plan(raw_plan, policy, repo_facts)
+        for s in plan.steps:
+            if s.op not in ALLOWED_OPS:
+                raise RuntimeError(f"INVALID_OP: {s.op}")
 
-        jc.log("PLAN_V2", plan.to_dict())
-
-        # ------------------------------------------------------------
-        # HARD ENFORCEMENT: no invented ops
-        # ------------------------------------------------------------
-        for step in plan.steps:
-            if step.op not in ALLOWED_OPS:
-                raise RuntimeError(f"STRICT_PLANNER_VIOLATION: {step.op}")
-
-        # ------------------------------------------------------------
-        # Execute plan (Steps 4–8 live inside executors)
-        # ------------------------------------------------------------
         execute_plan(
             plan,
             owner=owner,
@@ -175,10 +120,21 @@ def run_agent_pipeline(
             prompt=prompt,
         )
 
+        # 🔒 PR REQUIRED GUARANTEE
+        if action in ("fix_bugs", "add_feature", "refactor", "create_pr"):
+            if not any(
+                e["type"] == "PR_CREATED"
+                for e in store.get_job_events(job_id)
+            ):
+                raise RuntimeError("PR was required but not created")
+
+        store.update_agent_job_status(job_id, "COMPLETED")
+        jc.log("LOG", "Job completed successfully")
+
     except RuntimeError as e:
         if str(e) == "ABORTED":
             store.update_agent_job_status(job_id, "ABORTED")
-            jc.log("LOG", "Job aborted by user")
+            jc.log("LOG", "Job aborted")
             return
 
         jc.log("ERROR", str(e))
